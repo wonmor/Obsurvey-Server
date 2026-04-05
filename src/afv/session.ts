@@ -1,15 +1,12 @@
 import { config } from '../config';
 import { AfvSession, AfvVoiceServerInfo } from './protocol';
 
-let currentSession: AfvSession | null = null;
-
-export async function afvLogin(): Promise<AfvSession> {
-  const { cid, password, callsign } = config.vatsim;
-  if (!cid || !password) {
-    throw new Error('VATSIM_CID and VATSIM_PASSWORD must be set');
-  }
-
-  console.log(`[AFV] Logging in as ${callsign}...`);
+/**
+ * Authenticate with AFV using user-provided credentials.
+ * Password is used only for this call and never stored.
+ */
+export async function afvLogin(cid: string, password: string, callsign: string): Promise<AfvSession> {
+  console.log(`[AFV] Authenticating CID ${cid} as ${callsign}...`);
 
   const res = await fetch(`${config.afv.server}/api/v1/auth`, {
     method: 'POST',
@@ -23,31 +20,17 @@ export async function afvLogin(): Promise<AfvSession> {
   }
 
   const data = await res.json() as Record<string, string>;
-  currentSession = {
+  console.log(`[AFV] CID ${cid} authenticated`);
+
+  return {
     token: data.token ?? data.jwt ?? data.access_token,
     expiresAt: Date.now() + 3_600_000,
   };
-
-  console.log('[AFV] Authenticated successfully');
-  return currentSession;
 }
 
-export function getSession(): AfvSession | null {
-  if (currentSession && Date.now() < currentSession.expiresAt) return currentSession;
-  return null;
-}
-
-export async function ensureSession(): Promise<AfvSession> {
-  const existing = getSession();
-  if (existing) return existing;
-  return afvLogin();
-}
-
-export async function getVoiceServers(): Promise<AfvVoiceServerInfo[]> {
-  const session = await ensureSession();
-
+export async function getVoiceServers(afvToken: string): Promise<AfvVoiceServerInfo[]> {
   const res = await fetch(`${config.afv.server}/api/v1/network/voiceservers`, {
-    headers: { Authorization: `Bearer ${session.token}` },
+    headers: { Authorization: `Bearer ${afvToken}` },
   });
 
   if (!res.ok) throw new Error(`Failed to get voice servers: ${res.status}`);
@@ -60,14 +43,12 @@ export async function getVoiceServers(): Promise<AfvVoiceServerInfo[]> {
   }));
 }
 
-export async function updateTransceivers(transceivers: any[]): Promise<void> {
-  const session = await ensureSession();
-
-  const res = await fetch(`${config.afv.server}/api/v1/users/${config.vatsim.callsign}/transceivers`, {
+export async function updateTransceivers(afvToken: string, callsign: string, transceivers: any[]): Promise<void> {
+  const res = await fetch(`${config.afv.server}/api/v1/users/${callsign}/transceivers`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${session.token}`,
+      Authorization: `Bearer ${afvToken}`,
     },
     body: JSON.stringify(transceivers),
   });
