@@ -3,35 +3,37 @@ set -e
 
 echo "[entrypoint] Starting VATRadio Server with swift audio relay"
 
-# 1. Start DBus
+# 1. Start DBus (required for swift IPC)
 mkdir -p /run/dbus
 dbus-daemon --system --fork 2>/dev/null || true
 eval $(dbus-launch --sh-syntax)
 export DBUS_SESSION_BUS_ADDRESS
+echo "[entrypoint] DBus ready"
 
-# 2. Start virtual display
+# 2. Start virtual display (swift needs a display even headless)
 Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
-sleep 1
+sleep 2
 echo "[entrypoint] Xvfb started on :99"
 
-# 3. Start PulseAudio with null sink
-pulseaudio --start --exit-idle-time=-1 --log-level=error 2>/dev/null || true
+# 3. Start PulseAudio with null sink for audio capture
+pulseaudio --start --system --disallow-exit --log-level=error 2>/dev/null \
+  || pulseaudio --start --exit-idle-time=-1 --log-level=error 2>/dev/null \
+  || true
 sleep 1
 
-# Ensure the null sink exists
+# Create null sink and set as default
 pactl load-module module-null-sink sink_name=vatradio sink_properties=device.description=VATRadio 2>/dev/null || true
 pactl set-default-sink vatradio 2>/dev/null || true
 echo "[entrypoint] PulseAudio ready with vatradio sink"
 
-# 4. Start swiftCore (headless VATSIM client) if installed
+# 4. Start swiftCore if installed
 if [ -x /opt/swift/bin/swiftcore ]; then
     echo "[entrypoint] Starting swiftCore..."
-    /opt/swift/bin/swiftcore \
-        --core \
-        --minimized \
-        2>&1 | sed 's/^/[swiftcore] /' &
+    # Set LD_LIBRARY_PATH so swift can find its bundled Qt libs
+    export LD_LIBRARY_PATH=/opt/swift/bin:${LD_LIBRARY_PATH}
+    /opt/swift/bin/swiftcore 2>&1 | sed 's/^/[swiftcore] /' &
     SWIFT_PID=$!
-    sleep 3
+    sleep 5
     echo "[entrypoint] swiftCore started (PID $SWIFT_PID)"
 else
     echo "[entrypoint] WARNING: swiftCore not found at /opt/swift/bin/swiftcore"

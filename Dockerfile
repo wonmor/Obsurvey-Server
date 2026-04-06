@@ -6,13 +6,13 @@ ENV DISPLAY=:99
 # System deps: Xvfb, PulseAudio, Qt5, DBus, Node.js 20
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
-    pulseaudio pulseaudio-utils \
+    pulseaudio pulseaudio-utils libpulse-mainloop-glib0 \
     dbus dbus-x11 \
     libqt5core5a libqt5network5 libqt5dbus5 libqt5multimedia5 \
     libqt5gui5 libqt5widgets5 libqt5xml5 libqt5svg5 \
     libqt5multimedia5-plugins \
     libgl1-mesa-glx libegl1-mesa libxkbcommon0 libxkbcommon-x11-0 \
-    libasound2 libopus0 \
+    libasound2 libopus0 libglib2.0-0 \
     curl wget ca-certificates gnupg \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
@@ -22,14 +22,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Download and install swift pilot client (official build includes VATSIM key)
-ARG SWIFT_VERSION=0.15.170
+# Install swift pilot client (official build includes VATSIM network key)
+# Requires Xvfb running for Qt installer even in unattended mode
+ARG SWIFT_VERSION=0.14.142
 ARG SWIFT_URL=https://github.com/swift-project/pilotclient/releases/download/v${SWIFT_VERSION}/swiftinstaller-linux-64-${SWIFT_VERSION}.run
 RUN wget -q -O /tmp/swift-installer.run "${SWIFT_URL}" \
     && chmod +x /tmp/swift-installer.run \
-    && /tmp/swift-installer.run --mode unattended --prefix /opt/swift 2>/dev/null \
-    || echo "[WARN] Swift installer may need manual install — update SWIFT_URL build arg if needed" \
-    && rm -f /tmp/swift-installer.run
+    && Xvfb :99 -screen 0 1024x768x16 & sleep 2 \
+    && /tmp/swift-installer.run --mode unattended --prefix /opt/swift --advanced 1 \
+    && rm -f /tmp/swift-installer.run \
+    && kill %1 2>/dev/null || true
 
 # Build whisper.cpp for speech-to-text transcription
 RUN apt-get update && apt-get install -y --no-install-recommends \
