@@ -90,6 +90,11 @@ alIcao = dbus.Struct([
 ], signature="ixsssbxsssssbsssibbb")
 own.updateOwnIcaoCodes(acIcao, alIcao)
 
+# Register audio callsign for AFV (must be done before FSD connect)
+audio = dbus.Interface(conn.get_object("org.swift_project.swiftcore", "/audio"), "org.swift_project.blackcore.contextaudio")
+ident = dbus.Struct(["vatradio", "", "", "vatradio", dbus.Int64(1)], signature="ssssx")
+audio.registerAudioCallsign(cs, ident)
+
 # Connect to VATSIM as observer
 servers_result = net.getVatsimFsdServers()
 server = list(servers_result[0][0])
