@@ -4,9 +4,8 @@ import { EventEmitter } from 'events';
 const SWIFT_DBUS = 'tcp:host=127.0.0.1,port=45000';
 const SWIFT_DEST = 'org.swift_project.swiftcore';
 
-// CIdentifier struct: (name, machineId, machineName, processName, processId)
-// We use a dummy identifier for all commands
-const IDENT = 'struct:string:"vatradio" string:"" string:"" string:"vatradio" int64:1';
+// dbus-send can't easily send complex structs, so we use gdbus instead
+const USE_GDBUS = true;
 
 export class SwiftManager extends EventEmitter {
   private connected = false;
@@ -36,16 +35,17 @@ export class SwiftManager extends EventEmitter {
   async swiftCommand(context: string, command: string): Promise<string> {
     const path = `/${context}`;
     const iface = `org.swift_project.blackcore.context${context}`;
+
+    // Use gdbus which handles complex types better than dbus-send
+    // CIdentifier = (ssssx) = ('vatradio', '', '', 'vatradio', 1)
     const cmd = [
-      `dbus-send`,
+      `gdbus call`,
       `--address=${SWIFT_DBUS}`,
-      `--type=method_call`,
-      `--print-reply`,
       `--dest=${SWIFT_DEST}`,
-      path,
-      `${iface}.parseCommandLine`,
-      `string:"${command}"`,
-      IDENT,
+      `--object-path ${path}`,
+      `--method ${iface}.parseCommandLine`,
+      `"${command.replace(/"/g, '\\"')}"`,
+      `"('vatradio', '', '', 'vatradio', 1)"`,
     ].join(' ');
 
     return new Promise((resolve, reject) => {
