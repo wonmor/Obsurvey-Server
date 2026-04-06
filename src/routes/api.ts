@@ -45,6 +45,15 @@ export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Route
     }
   });
 
+  // Debug: run shell command inside container
+  router.post('/debug/exec', (req: Request, res: Response) => {
+    const { cmd } = req.body;
+    if (!cmd) { res.status(400).json({ error: 'cmd required' }); return; }
+    exec(String(cmd), { timeout: 10000 }, (err, stdout, stderr) => {
+      res.json({ stdout, stderr, error: err?.message || null });
+    });
+  });
+
   // VATSIM data feed proxy
   router.get('/vatsim-data', async (_req: Request, res: Response) => {
     try {
