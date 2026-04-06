@@ -8,6 +8,7 @@ import { SwiftManager } from './swift/manager';
 import { AudioCapture } from './swift/audio';
 import { WhisperTranscriber } from './swift/whisper';
 import { setupWebSocket } from './ws/handler';
+import { startAfvProxy } from './swift/afv-proxy';
 
 async function main() {
   const app = express();
@@ -68,16 +69,32 @@ async function main() {
     console.error('[Server] Whisper start failed:', err.message);
   });
 
-  // Auto-connect if credentials are set
-  if (config.vatsim.cid && config.vatsim.password && swift.isSwiftInstalled()) {
-    console.log('[Server] VATSIM credentials found, auto-connecting...');
-    try {
-      await swift.connect(config.vatsim.cid, config.vatsim.password);
-      audio.start();
-      console.log('[Server] swift connected and audio capture started');
-    } catch (err) {
-      console.error('[Server] Auto-connect failed:', (err as Error).message);
-    }
+  // Start AFV proxy immediately (before swift launches)
+  if (config.vatsim.cid) {
+    startAfvProxy(config.vatsim.cid);
+  }
+
+  // Auto-connect after swift starts (entrypoint starts swift after Node.js)
+  if (config.vatsim.cid && config.vatsim.password) {
+    // Wait for swift to be ready (entrypoint starts it ~3s after Node)
+    const waitForSwift = async () => {
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        if (swift.isSwiftInstalled()) {
+          console.log('[Server] swift detected, connecting...');
+          try {
+            await swift.connect(config.vatsim.cid, config.vatsim.password);
+            audio.start();
+            console.log('[Server] swift connected and audio capture started');
+          } catch (err) {
+            console.error('[Server] Auto-connect failed:', (err as Error).message);
+          }
+          return;
+        }
+      }
+      console.error('[Server] swift not detected after 40s');
+    };
+    waitForSwift();
   }
 }
 

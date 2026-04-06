@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libqt5gui5 libqt5widgets5 libqt5xml5 libqt5svg5 \
     libqt5multimedia5-plugins \
     libgl1-mesa-glx libegl1-mesa libxkbcommon0 libxkbcommon-x11-0 \
-    libasound2 libopus0 libglib2.0-0 \
+    libasound2 libopus0 libglib2.0-0 openssl dnsutils \
     curl wget ca-certificates gnupg \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
