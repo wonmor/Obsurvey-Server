@@ -63,12 +63,61 @@ print(result)
   async connect(cid: string, password: string): Promise<void> {
     if (!this.isSwiftInstalled()) throw new Error('swiftCore not installed');
     const callsign = `${cid}_OBS`;
+
     try {
-      await this.swiftCommand('ownaircraft', `.callsign ${callsign}`);
-      await this.swiftCommand('network', `.con observer ${cid} ${password}`);
-      this.connected = true;
-      this.emit('connected');
-      console.log(`[Swift] Connected as ${callsign}`);
+      const result = await this.runPython(`
+import dbus, os, time
+conn = dbus.connection.Connection("tcp:host=127.0.0.1,port=45000")
+own = dbus.Interface(conn.get_object("org.swift_project.swiftcore", "/ownaircraft"), "org.swift_project.blackcore.contextownaircraft")
+net = dbus.Interface(conn.get_object("org.swift_project.swiftcore", "/network"), "org.swift_project.blackcore.contextnetwork")
+
+# Set callsign
+cs = dbus.Struct(["${callsign}", "", "", dbus.Struct([dbus.Int32(0)], signature="i")], signature="sss(i)")
+own.updateOwnCallsign(cs)
+
+# Set ICAO (C172 — required even for observers)
+acIcao = dbus.Struct([
+    dbus.Int32(-1), dbus.Int64(-1), "C172", "", "C172", "Cessna", "Cessna 172",
+    "L", "L1P", "", dbus.Int32(-1), dbus.Int64(-1), "", dbus.Int32(0),
+    dbus.Int32(0), dbus.Int32(0), "", "", dbus.Boolean(True),
+    dbus.Struct([dbus.Int32(1)], signature="i"),
+    dbus.Boolean(False), dbus.Boolean(False), dbus.Boolean(False), dbus.Int32(0),
+], signature="ixssssssssixsiiissb(i)bbbi")
+alIcao = dbus.Struct([
+    dbus.Int32(-1), dbus.Int64(-1), "", "", "", dbus.Boolean(False), dbus.Int64(-1),
+    "", "", "", "", "", dbus.Boolean(False), "", "", "", dbus.Int32(0),
+    dbus.Boolean(False), dbus.Boolean(False), dbus.Boolean(False),
+], signature="ixsssbxsssssbsssibbb")
+own.updateOwnIcaoCodes(acIcao, alIcao)
+
+# Connect to VATSIM as observer
+servers_result = net.getVatsimFsdServers()
+server = list(servers_result[0][0])
+server[4] = "${cid}"
+server[5] = "VATRadio Observer"
+server[7] = "${password}"
+my_server = dbus.Struct(server, signature="sssisssssss(i)ssiiibx")
+partner_cs = dbus.Struct(["", "", "", dbus.Struct([dbus.Int32(0)], signature="i")], signature="sss(i)")
+login_mode = dbus.Struct([dbus.Struct([dbus.Int32(2)], signature="i")], signature="(i)")
+
+result = net.connectToNetwork(my_server, "", dbus.Boolean(False), "", dbus.Boolean(False), partner_cs, login_mode)
+severity = result[1][0]
+message = str(result[2])
+
+time.sleep(3)
+connected = net.isConnected()
+print(f"{severity}|{connected}|{message}")
+`);
+
+      const [severity, connectedStr, message] = result.trim().split('|');
+      this.connected = connectedStr === '1';
+
+      if (this.connected) {
+        this.emit('connected');
+        console.log(`[Swift] Connected as ${callsign}: ${message}`);
+      } else {
+        throw new Error(message);
+      }
     } catch (err) {
       console.error('[Swift] Connect failed:', (err as Error).message);
       throw err;
@@ -87,7 +136,17 @@ print(result)
   async tuneCom1(frequencyMhz: string): Promise<void> {
     if (this.com1 === frequencyMhz) return;
     try {
-      await this.swiftCommand('ownaircraft', `.com1 ${frequencyMhz}`);
+      const freqHz = Math.round(parseFloat(frequencyMhz) * 1_000_000);
+      await this.runPython(`
+import dbus
+conn = dbus.connection.Connection("tcp:host=127.0.0.1,port=45000")
+own = dbus.Interface(conn.get_object("org.swift_project.swiftcore", "/ownaircraft"), "org.swift_project.blackcore.contextownaircraft")
+freq = dbus.Struct([dbus.Double(${freqHz})], signature="d")
+com = dbus.Struct([dbus.Int32(0)], signature="i")
+ident = dbus.Struct(["vatradio", "", "", "vatradio", dbus.Int64(1)], signature="ssssx")
+own.updateActiveComFrequency(freq, com, ident)
+print("ok")
+`);
       this.com1 = frequencyMhz;
       this.emit('tuned', { com: 1, frequency: frequencyMhz });
       console.log(`[Swift] COM1 → ${frequencyMhz} MHz`);
@@ -100,7 +159,17 @@ print(result)
   async tuneCom2(frequencyMhz: string): Promise<void> {
     if (this.com2 === frequencyMhz) return;
     try {
-      await this.swiftCommand('ownaircraft', `.com2 ${frequencyMhz}`);
+      const freqHz = Math.round(parseFloat(frequencyMhz) * 1_000_000);
+      await this.runPython(`
+import dbus
+conn = dbus.connection.Connection("tcp:host=127.0.0.1,port=45000")
+own = dbus.Interface(conn.get_object("org.swift_project.swiftcore", "/ownaircraft"), "org.swift_project.blackcore.contextownaircraft")
+freq = dbus.Struct([dbus.Double(${freqHz})], signature="d")
+com = dbus.Struct([dbus.Int32(1)], signature="i")
+ident = dbus.Struct(["vatradio", "", "", "vatradio", dbus.Int64(1)], signature="ssssx")
+own.updateActiveComFrequency(freq, com, ident)
+print("ok")
+`);
       this.com2 = frequencyMhz;
       this.emit('tuned', { com: 2, frequency: frequencyMhz });
       console.log(`[Swift] COM2 → ${frequencyMhz} MHz`);
@@ -155,6 +224,16 @@ print(result)
     if (top2 && top2 !== this.com2) await this.tuneCom2(top2);
 
     this.emit('rebalanced', { com1: this.com1, com2: this.com2, votes: ranked });
+  }
+
+  private runPython(script: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const escaped = script.replace(/"/g, '\\"').replace(/\n/g, '\\n');
+      exec(`python3 -c "${escaped}"`, { timeout: 15000 }, (err, stdout, stderr) => {
+        if (err) reject(new Error(stderr || err.message));
+        else resolve(stdout);
+      });
+    });
   }
 
   // Legacy single-tune method (tunes COM1)
