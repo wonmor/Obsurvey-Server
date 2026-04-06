@@ -41,8 +41,8 @@ export class SwiftManager extends EventEmitter {
     // and gdbus has address issues with P2P connections
     const pyScript = `
 import dbus
-bus = dbus.bus.BusConnection('tcp:host=127.0.0.1,port=45000')
-obj = bus.get_object('org.swift_project.swiftcore', '${path}')
+conn = dbus.connection.Connection('tcp:host=127.0.0.1,port=45000')
+obj = conn.get_object('org.swift_project.swiftcore', '${path}')
 iface = dbus.Interface(obj, '${iface}')
 ident = dbus.Struct(['vatradio', '', '', 'vatradio', dbus.Int64(1)], signature='ssssx')
 result = iface.parseCommandLine('${escapedCmd}', ident)
