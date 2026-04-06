@@ -3,6 +3,7 @@ import { IncomingMessage } from 'http';
 import { SwiftManager } from '../swift/manager';
 import { AudioCapture } from '../swift/audio';
 import { WhisperTranscriber } from '../swift/whisper';
+import { AfvClient } from '../afv/client';
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -17,7 +18,9 @@ export function setupWebSocket(
   swift: SwiftManager,
   audio: AudioCapture,
   whisper: WhisperTranscriber,
+  afv: AfvClient,
 ): void {
+  // Forward PulseAudio capture (from swift) to clients
   audio.on('audio', (chunk: Buffer) => {
     if (clients.length === 0) return;
     const msg = JSON.stringify({
@@ -26,6 +29,21 @@ export function setupWebSocket(
       sampleRate: 48000,
       channels: 1,
       format: 's16le',
+      source: 'pulseaudio',
+      timestamp: Date.now(),
+    });
+    for (const client of clients) {
+      if (client.ws.readyState === WebSocket.OPEN) client.ws.send(msg);
+    }
+  });
+
+  // Forward AFV UDP voice packets to clients
+  afv.on('audio', (chunk: Buffer) => {
+    if (clients.length === 0) return;
+    const msg = JSON.stringify({
+      type: 'audio',
+      data: chunk.toString('base64'),
+      source: 'afv',
       timestamp: Date.now(),
     });
     for (const client of clients) {
@@ -55,8 +73,8 @@ export function setupWebSocket(
     ws.send(JSON.stringify({
       type: 'welcome',
       clientId,
-      swiftInstalled: swift.isSwiftInstalled(),
       swiftConnected: swift.isConnected(),
+      afvConnected: afv.isConnected(),
       com1: swift.getCom1(),
       com2: swift.getCom2(),
       tunedFrequencies: swift.getTunedFrequencies(),
@@ -69,13 +87,16 @@ export function setupWebSocket(
         const msg = JSON.parse(raw.toString());
         switch (msg.type) {
           case 'tune': {
-            // Multi-user: register a vote for this frequency
             const freq = String(msg.frequency);
             swift.requestFrequency(clientId, freq);
+            // Also set on AFV client
+            const ranked = swift.getFrequencyVotes();
+            if (ranked[0]) afv.setCom1(ranked[0].frequency);
+            if (ranked[1]) afv.setCom2(ranked[1].frequency);
             ws.send(JSON.stringify({
               type: 'tuneOk', frequency: freq,
               com1: swift.getCom1(), com2: swift.getCom2(),
-              votes: swift.getFrequencyVotes(),
+              votes: ranked,
             }));
             break;
           }

@@ -2,11 +2,12 @@ import { Router, Request, Response } from 'express';
 import { exec } from 'child_process';
 import { SwiftManager } from '../swift/manager';
 import { AudioCapture } from '../swift/audio';
+import { AfvClient } from '../afv/client';
 import { getConnectedClientCount } from '../ws/handler';
 import { getAtis, getAllVatsimAtis } from '../services/atis';
 import { config } from '../config';
 
-export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Router {
+export function createApiRouter(swift: SwiftManager, audio: AudioCapture, afv: AfvClient): Router {
   const router = Router();
 
   // Health check
@@ -19,6 +20,7 @@ export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Route
         com1: swift.getCom1(),
         com2: swift.getCom2(),
       },
+      afv: { connected: afv.isConnected() },
       audio: { capturing: audio.isRunning() },
       tunedFrequencies: swift.getTunedFrequencies(),
       frequencyVotes: swift.getFrequencyVotes(),
@@ -128,17 +130,19 @@ export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Route
     }
   });
 
-  // Tune COM1 directly
+  // Tune frequency (sets both swift COM and AFV transceiver)
   router.post('/tune', async (req: Request, res: Response) => {
     try {
       const { frequency, com } = req.body;
       if (!frequency) { res.status(400).json({ error: 'frequency required' }); return; }
       if (com === 2) {
         await swift.tuneCom2(String(frequency));
+        afv.setCom2(String(frequency));
       } else {
         await swift.tuneCom1(String(frequency));
+        afv.setCom1(String(frequency));
       }
-      res.json({ ok: true, frequency, com1: swift.getCom1(), com2: swift.getCom2() });
+      res.json({ ok: true, frequency, com1: swift.getCom1(), com2: swift.getCom2(), afv: afv.isConnected() });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }
