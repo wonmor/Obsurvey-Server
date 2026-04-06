@@ -8,7 +8,7 @@ ENV XDG_RUNTIME_DIR=/tmp/runtime-root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     pulseaudio pulseaudio-utils libpulse-mainloop-glib0 libpulse0 \
-    dbus dbus-x11 libglib2.0-bin \
+    dbus dbus-x11 libglib2.0-bin python3 python3-dbus \
     libqt5core5a libqt5network5 libqt5dbus5 libqt5multimedia5 \
     libqt5gui5 libqt5widgets5 libqt5xml5 libqt5svg5 \
     libqt5multimedia5-plugins \

@@ -35,18 +35,21 @@ export class SwiftManager extends EventEmitter {
   async swiftCommand(context: string, command: string): Promise<string> {
     const path = `/${context}`;
     const iface = `org.swift_project.blackcore.context${context}`;
+    const escapedCmd = command.replace(/'/g, "'\\''");
 
-    // Use gdbus which handles complex types better than dbus-send
-    // CIdentifier = (ssssx) = ('vatradio', '', '', 'vatradio', 1)
-    const cmd = [
-      `gdbus call`,
-      `--address=${SWIFT_DBUS}`,
-      `--dest=${SWIFT_DEST}`,
-      `--object-path ${path}`,
-      `--method ${iface}.parseCommandLine`,
-      `"${command.replace(/"/g, '\\"')}"`,
-      `"('vatradio', '', '', 'vatradio', 1)"`,
-    ].join(' ');
+    // Use python3-dbus for complex struct types since dbus-send can't handle them
+    // and gdbus has address issues with P2P connections
+    const pyScript = `
+import dbus
+bus = dbus.bus.BusConnection('tcp:host=127.0.0.1,port=45000')
+obj = bus.get_object('org.swift_project.swiftcore', '${path}')
+iface = dbus.Interface(obj, '${iface}')
+ident = dbus.Struct(['vatradio', '', '', 'vatradio', dbus.Int64(1)], signature='ssssx')
+result = iface.parseCommandLine('${escapedCmd}', ident)
+print(result)
+`.trim();
+
+    const cmd = `python3 -c "${pyScript.replace(/"/g, '\\"').replace(/\n/g, ';')}"`;
 
     return new Promise((resolve, reject) => {
       exec(cmd, { timeout: 10000 }, (err, stdout, stderr) => {
