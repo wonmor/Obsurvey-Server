@@ -1,93 +1,82 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { IncomingMessage } from 'http';
-import { getSession, UserSession } from '../auth/sessionStore';
+import { SwiftManager } from '../swift/manager';
+import { AudioCapture } from '../swift/audio';
 
 interface ConnectedClient {
   ws: WebSocket;
   id: string;
-  session: UserSession;
 }
 
 let clients: ConnectedClient[] = [];
 let clientIdCounter = 0;
 
-export function setupWebSocket(wss: WebSocketServer): void {
+export function setupWebSocket(
+  wss: WebSocketServer,
+  swift: SwiftManager,
+  audio: AudioCapture,
+): void {
+  // Forward captured audio to all connected WebSocket clients
+  audio.on('audio', (chunk: Buffer) => {
+    if (clients.length === 0) return;
+
+    const msg = JSON.stringify({
+      type: 'audio',
+      data: chunk.toString('base64'),
+      sampleRate: 48000,
+      channels: 1,
+      format: 's16le',
+      timestamp: Date.now(),
+    });
+
+    for (const client of clients) {
+      if (client.ws.readyState === WebSocket.OPEN) {
+        client.ws.send(msg);
+      }
+    }
+  });
+
+  swift.on('connected', () => broadcast({ type: 'swiftStatus', connected: true }));
+  swift.on('disconnected', () => broadcast({ type: 'swiftStatus', connected: false }));
+  swift.on('tuned', (freq: string) => broadcast({ type: 'frequencyTuned', frequency: freq }));
+  swift.on('untuned', (freq: string) => broadcast({ type: 'frequencyUntuned', frequency: freq }));
+
   wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
-    // Authenticate via query parameter: /ws?token=<sessionToken>
-    const url = new URL(req.url ?? '/', `http://${req.headers.host}`);
-    const token = url.searchParams.get('token');
-
-    if (!token) {
-      ws.close(4401, 'Missing session token');
-      return;
-    }
-
-    const session = getSession(token);
-    if (!session) {
-      ws.close(4401, 'Invalid or expired session');
-      return;
-    }
-
     const clientId = `client-${++clientIdCounter}`;
-    const client: ConnectedClient = { ws, id: clientId, session };
+    const client: ConnectedClient = { ws, id: clientId };
     clients.push(client);
 
-    console.log(`[WS] ${session.callsign} connected as ${clientId} (${clients.length} total)`);
+    console.log(`[WS] Client ${clientId} connected (${clients.length} total)`);
 
-    // Forward audio from this user's voice client to their WebSocket
-    const audioHandler = (data: Buffer) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'audio',
-          data: data.toString('base64'),
-          timestamp: Date.now(),
-        }));
-      }
-    };
-
-    const connHandler = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'afvStatus', connected: true }));
-      }
-    };
-
-    const disconnHandler = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'afvStatus', connected: false }));
-      }
-    };
-
-    session.voiceClient.on('audio', audioHandler);
-    session.voiceClient.on('connected', connHandler);
-    session.voiceClient.on('disconnected', disconnHandler);
-
-    // Send welcome
+    // Send current state
     ws.send(JSON.stringify({
       type: 'welcome',
       clientId,
-      callsign: session.callsign,
-      afvConnected: session.voiceClient.isConnected(),
-      tunedFrequencies: session.voiceClient.getTunedFrequencies(),
+      swiftInstalled: swift.isSwiftInstalled(),
+      swiftConnected: swift.isConnected(),
+      tunedFrequencies: swift.getTunedFrequencies(),
+      audioCapturing: audio.isRunning(),
     }));
 
-    // Handle messages from client
     ws.on('message', async (raw) => {
       try {
         const msg = JSON.parse(raw.toString());
         switch (msg.type) {
           case 'tune':
-            await session.voiceClient.tuneFrequency(String(msg.frequency), msg.lat, msg.lon);
+            await swift.tuneFrequency(String(msg.frequency));
             ws.send(JSON.stringify({ type: 'tuneOk', frequency: msg.frequency }));
             break;
           case 'untune':
-            await session.voiceClient.untuneFrequency(String(msg.frequency));
+            await swift.untuneFrequency(String(msg.frequency));
             ws.send(JSON.stringify({ type: 'untuneOk', frequency: msg.frequency }));
             break;
           case 'getStatus':
             ws.send(JSON.stringify({
               type: 'status',
-              afvConnected: session.voiceClient.isConnected(),
-              tunedFrequencies: session.voiceClient.getTunedFrequencies(),
+              swiftConnected: swift.isConnected(),
+              tunedFrequencies: swift.getTunedFrequencies(),
+              audioCapturing: audio.isRunning(),
+              connectedClients: clients.length,
             }));
             break;
           case 'ping':
@@ -100,13 +89,19 @@ export function setupWebSocket(wss: WebSocketServer): void {
     });
 
     ws.on('close', () => {
-      session.voiceClient.off('audio', audioHandler);
-      session.voiceClient.off('connected', connHandler);
-      session.voiceClient.off('disconnected', disconnHandler);
       clients = clients.filter((c) => c.id !== clientId);
-      console.log(`[WS] ${session.callsign} disconnected (${clients.length} total)`);
+      console.log(`[WS] Client ${clientId} disconnected (${clients.length} total)`);
     });
   });
+}
+
+function broadcast(data: object): void {
+  const msg = JSON.stringify(data);
+  for (const client of clients) {
+    if (client.ws.readyState === WebSocket.OPEN) {
+      client.ws.send(msg);
+    }
+  }
 }
 
 export function getConnectedClientCount(): number {

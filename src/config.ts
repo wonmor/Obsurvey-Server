@@ -3,18 +3,17 @@ dotenv.config();
 
 export const config = {
   port: parseInt(process.env.PORT || '3000', 10),
-  afv: {
-    server: process.env.AFV_SERVER || 'https://voice1.vatsim.net',
-    voiceServers: [
-      'voice1.vatsim.net',
-      'voice2.vatsim.net',
-    ],
+  vatsim: {
+    cid: process.env.VATSIM_CID || '',
+    password: process.env.VATSIM_PASSWORD || '',
   },
   vatsimData: {
     url: 'https://data.vatsim.net/v3/vatsim-data.json',
   },
-  session: {
-    maxAge: 3_600_000, // 1 hour
-    maxSessions: 50,
+  audio: {
+    sampleRate: 48000,
+    channels: 1,
+    // PCM chunk size to buffer before sending (~100ms of audio)
+    chunkSize: 9600, // 48000 * 2 bytes * 1 channel * 0.1s
   },
 };
