@@ -228,8 +228,10 @@ print("ok")
 
   private runPython(script: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const escaped = script.replace(/"/g, '\\"').replace(/\n/g, '\\n');
-      exec(`python3 -c "${escaped}"`, { timeout: 15000 }, (err, stdout, stderr) => {
+      // Write script to temp file to avoid shell escaping issues
+      const tmpFile = `/tmp/swift_cmd_${Date.now()}.py`;
+      const writeAndRun = `cat << 'PYEOF' > ${tmpFile}\n${script}\nPYEOF\npython3 ${tmpFile}; rm -f ${tmpFile}`;
+      exec(writeAndRun, { timeout: 15000 }, (err, stdout, stderr) => {
         if (err) reject(new Error(stderr || err.message));
         else resolve(stdout);
       });
