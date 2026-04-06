@@ -25,10 +25,11 @@ export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Route
     });
   });
 
-  // Debug: introspect swift DBus
-  router.get('/debug/dbus', (_req: Request, res: Response) => {
-    exec('dbus-send --address=tcp:host=127.0.0.1,port=45000 --type=method_call --print-reply --dest=org.swift_project.swiftcore / org.freedesktop.DBus.Introspectable.Introspect 2>&1', { timeout: 5000 }, (err, stdout, stderr) => {
-      res.json({ stdout: stdout || '', stderr: stderr || '', error: err?.message || null });
+  // Debug: introspect swift DBus at any path
+  router.get('/debug/dbus', (req: Request, res: Response) => {
+    const path = (req.query.path as string) || '/';
+    exec(`dbus-send --address=tcp:host=127.0.0.1,port=45000 --type=method_call --print-reply --dest=org.swift_project.swiftcore ${path} org.freedesktop.DBus.Introspectable.Introspect 2>&1`, { timeout: 5000 }, (err, stdout, stderr) => {
+      res.json({ path, stdout: stdout || '', stderr: stderr || '', error: err?.message || null });
     });
   });
 
