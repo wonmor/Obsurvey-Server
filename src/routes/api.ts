@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { exec } from 'child_process';
 import { SwiftManager } from '../swift/manager';
 import { AudioCapture } from '../swift/audio';
 import { getConnectedClientCount } from '../ws/handler';
@@ -21,6 +22,13 @@ export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Route
       tunedFrequencies: swift.getTunedFrequencies(),
       connectedClients: getConnectedClientCount(),
       uptime: process.uptime(),
+    });
+  });
+
+  // Debug: introspect swift DBus
+  router.get('/debug/dbus', (_req: Request, res: Response) => {
+    exec('dbus-send --address=tcp:host=127.0.0.1,port=45000 --type=method_call --print-reply --dest=org.swift_project.swiftcore / org.freedesktop.DBus.Introspectable.Introspect 2>&1', { timeout: 5000 }, (err, stdout, stderr) => {
+      res.json({ stdout: stdout || '', stderr: stderr || '', error: err?.message || null });
     });
   });
 
