@@ -2,6 +2,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { IncomingMessage } from 'http';
 import { SwiftManager } from '../swift/manager';
 import { AudioCapture } from '../swift/audio';
+import { WhisperTranscriber } from '../swift/whisper';
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -15,6 +16,7 @@ export function setupWebSocket(
   wss: WebSocketServer,
   swift: SwiftManager,
   audio: AudioCapture,
+  whisper: WhisperTranscriber,
 ): void {
   // Forward captured audio to all connected WebSocket clients
   audio.on('audio', (chunk: Buffer) => {
@@ -34,6 +36,15 @@ export function setupWebSocket(
         client.ws.send(msg);
       }
     }
+  });
+
+  // Forward whisper transcripts to all clients
+  whisper.on('transcript', (transcript: { text: string; timestamp: number }) => {
+    broadcast({
+      type: 'transcript',
+      text: transcript.text,
+      timestamp: transcript.timestamp,
+    });
   });
 
   swift.on('connected', () => broadcast({ type: 'swiftStatus', connected: true }));

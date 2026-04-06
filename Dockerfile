@@ -31,6 +31,16 @@ RUN wget -q -O /tmp/swift-installer.run "${SWIFT_URL}" \
     || echo "[WARN] Swift installer may need manual install — update SWIFT_URL build arg if needed" \
     && rm -f /tmp/swift-installer.run
 
+# Build whisper.cpp for speech-to-text transcription
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential cmake \
+    && git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git /opt/whisper.cpp \
+    && cd /opt/whisper.cpp && cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j$(nproc) \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download whisper tiny.en model (39MB — fast, English-optimized, perfect for ATC)
+RUN cd /opt/whisper.cpp && bash models/download-ggml-model.sh tiny.en
+
 # PulseAudio: null sink to capture swift audio output
 RUN mkdir -p /run/pulse /root/.config/pulse \
     && echo "load-module module-null-sink sink_name=vatradio sink_properties=device.description=VATRadio\n\

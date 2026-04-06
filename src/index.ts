@@ -6,6 +6,7 @@ import { config } from './config';
 import { createApiRouter } from './routes/api';
 import { SwiftManager } from './swift/manager';
 import { AudioCapture } from './swift/audio';
+import { WhisperTranscriber } from './swift/whisper';
 import { setupWebSocket } from './ws/handler';
 
 async function main() {
@@ -17,6 +18,12 @@ async function main() {
 
   const swift = new SwiftManager();
   const audio = new AudioCapture();
+  const whisper = new WhisperTranscriber();
+
+  // Pipe audio into whisper for transcription
+  audio.on('audio', (chunk: Buffer) => {
+    whisper.feed(chunk);
+  });
 
   // REST API
   app.use('/api', createApiRouter(swift, audio));
@@ -25,8 +32,8 @@ async function main() {
   app.get('/', (_req, res) => {
     res.json({
       name: 'VATRadio Server',
-      version: '2.0.0',
-      description: 'VATSIM audio relay via swift pilot client — observer mode, receive only',
+      version: '2.1.0',
+      description: 'VATSIM audio relay via swift + Whisper transcription',
       swift: {
         installed: swift.isSwiftInstalled(),
         connected: swift.isConnected(),
@@ -40,19 +47,25 @@ async function main() {
         untune: 'POST /api/untune { frequency }',
         frequencies: 'GET /api/frequencies',
         vatsimData: 'GET /api/vatsim-data',
-        websocket: 'ws://host/ws (audio stream)',
+        websocket: 'ws://host/ws (audio + transcripts)',
       },
     });
   });
 
-  // WebSocket for audio streaming
+  // WebSocket for audio streaming + transcripts
   const wss = new WebSocketServer({ server, path: '/ws' });
-  setupWebSocket(wss, swift, audio);
+  setupWebSocket(wss, swift, audio, whisper);
 
   server.listen(config.port, () => {
-    console.log(`[Server] VATRadio Server v2.0 on port ${config.port}`);
+    console.log(`[Server] VATRadio Server v2.1 on port ${config.port}`);
     console.log(`[Server] swift installed: ${swift.isSwiftInstalled()}`);
-    console.log(`[Server] Observer mode — receive audio only, never transmit`);
+    console.log('[Server] Whisper transcription: tiny.en model');
+    console.log('[Server] Observer mode — receive audio only, never transmit');
+  });
+
+  // Start whisper
+  whisper.start().catch((err) => {
+    console.error('[Server] Whisper start failed:', err.message);
   });
 
   // Auto-connect if credentials are set
