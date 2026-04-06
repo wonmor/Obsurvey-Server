@@ -24,6 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /tmp/runtime-root
 
+# Install libssl1.1 from Ubuntu 20.04 (swift was built against OpenSSL 1.1)
+RUN echo "deb http://archive.ubuntu.com/ubuntu focal-updates main" >> /etc/apt/sources.list.d/focal.list \
+    && apt-get update && apt-get install -y --no-install-recommends libssl1.1 \
+    && rm /etc/apt/sources.list.d/focal.list \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install swift pilot client
 ARG SWIFT_VERSION=0.14.142
 ARG SWIFT_URL=https://github.com/swift-project/pilotclient/releases/download/v${SWIFT_VERSION}/swiftinstaller-linux-64-${SWIFT_VERSION}.run
