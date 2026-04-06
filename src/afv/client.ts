@@ -94,12 +94,35 @@ export class AfvClient extends EventEmitter {
   // --- AFV REST API ---
 
   private async authenticate(): Promise<string> {
-    const res = await this.afvRequest('POST', '/api/v1/auth', {
-      cid: this.cid,
-      password: this.password,
-      callsign: this.callsign,
+    // Get JWT from VATSIM auth server (not AFV directly)
+    return new Promise((resolve, reject) => {
+      const body = JSON.stringify({ cid: this.cid, password: this.password });
+      const req = https.request({
+        hostname: 'auth.vatsim.net',
+        port: 443,
+        path: '/api/fsd-jwt',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString());
+            if (data.success && data.token) {
+              resolve(data.token);
+            } else {
+              reject(new Error(`Auth failed: ${JSON.stringify(data)}`));
+            }
+          } catch (err) {
+            reject(err);
+          }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
     });
-    return res.token;
   }
 
   private async registerCallsign(): Promise<void> {
