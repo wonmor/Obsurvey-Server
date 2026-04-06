@@ -73,9 +73,17 @@ export class WhisperTranscriber extends EventEmitter {
       // Clean up
       await unlink(wavPath).catch(() => {});
 
-      // Emit if we got meaningful text
-      const trimmed = text.trim();
-      if (trimmed && trimmed !== '[BLANK_AUDIO]' && trimmed.length > 2) {
+      // Filter out silence hallucinations and noise
+      const trimmed = text.trim().replace(/^\(.*\)$/, '').trim(); // Remove (parenthesized noise markers)
+      const NOISE_WORDS = ['you', 'the', 'a', 'i', 'it', 'is', 'so', 'thank you', 'thanks', 'bye', 'hmm', 'um'];
+      const isNoise = !trimmed
+        || trimmed === '[BLANK_AUDIO]'
+        || trimmed.length < 4
+        || NOISE_WORDS.includes(trimmed.toLowerCase())
+        || /^\[.*\]$/.test(trimmed)
+        || /^\.+$/.test(trimmed);
+
+      if (!isNoise) {
         console.log(`[Whisper] "${trimmed}"`);
         this.emit('transcript', {
           text: trimmed,

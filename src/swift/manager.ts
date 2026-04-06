@@ -4,12 +4,13 @@ import { EventEmitter } from 'events';
 const SWIFT_DBUS = 'tcp:host=127.0.0.1,port=45000';
 const SWIFT_DEST = 'org.swift_project.swiftcore';
 
-// dbus-send can't easily send complex structs, so we use gdbus instead
-const USE_GDBUS = true;
-
 export class SwiftManager extends EventEmitter {
   private connected = false;
-  private tunedFrequencies: string[] = [];
+  private com1: string | null = null;
+  private com2: string | null = null;
+
+  // Track per-client frequency requests for multi-user priority
+  private clientRequests = new Map<string, Set<string>>(); // clientId -> requested freqs
 
   isSwiftInstalled(): boolean {
     try {
@@ -24,21 +25,21 @@ export class SwiftManager extends EventEmitter {
     return this.connected;
   }
 
+  getCom1(): string | null { return this.com1; }
+  getCom2(): string | null { return this.com2; }
+
   getTunedFrequencies(): string[] {
-    return [...this.tunedFrequencies];
+    const freqs: string[] = [];
+    if (this.com1) freqs.push(this.com1);
+    if (this.com2) freqs.push(this.com2);
+    return freqs;
   }
 
-  /**
-   * Send a swift dot-command via parseCommandLine on the network context.
-   * Swift commands: .con (connect), .dis (disconnect), .com1 (tune COM1), etc.
-   */
   async swiftCommand(context: string, command: string): Promise<string> {
     const path = `/${context}`;
     const iface = `org.swift_project.blackcore.context${context}`;
     const escapedCmd = command.replace(/'/g, "'\\''");
 
-    // Use python3-dbus for complex struct types since dbus-send can't handle them
-    // and gdbus has address issues with P2P connections
     const pyScript = `
 import dbus
 conn = dbus.connection.Connection('tcp:host=127.0.0.1,port=45000')
@@ -61,12 +62,9 @@ print(result)
 
   async connect(cid: string, password: string): Promise<void> {
     if (!this.isSwiftInstalled()) throw new Error('swiftCore not installed');
-
     const callsign = `${cid}_OBS`;
     try {
-      // Set callsign first
       await this.swiftCommand('ownaircraft', `.callsign ${callsign}`);
-      // Connect as observer — swift .con command
       await this.swiftCommand('network', `.con observer ${cid} ${password}`);
       this.connected = true;
       this.emit('connected');
@@ -78,30 +76,95 @@ print(result)
   }
 
   async disconnect(): Promise<void> {
-    try {
-      await this.swiftCommand('network', '.dis');
-    } catch (_) {}
+    try { await this.swiftCommand('network', '.dis'); } catch (_) {}
     this.connected = false;
-    this.tunedFrequencies = [];
+    this.com1 = null;
+    this.com2 = null;
     this.emit('disconnected');
   }
 
-  async tuneFrequency(frequencyMhz: string): Promise<void> {
+  /** Tune COM1 to a frequency */
+  async tuneCom1(frequencyMhz: string): Promise<void> {
+    if (this.com1 === frequencyMhz) return;
     try {
-      // .com1 <freq> sets COM1 active frequency
       await this.swiftCommand('ownaircraft', `.com1 ${frequencyMhz}`);
+      this.com1 = frequencyMhz;
+      this.emit('tuned', { com: 1, frequency: frequencyMhz });
+      console.log(`[Swift] COM1 → ${frequencyMhz} MHz`);
     } catch (err) {
-      console.error(`[Swift] Tune failed:`, (err as Error).message);
+      console.error(`[Swift] COM1 tune failed:`, (err as Error).message);
     }
-    if (!this.tunedFrequencies.includes(frequencyMhz)) {
-      this.tunedFrequencies.push(frequencyMhz);
+  }
+
+  /** Tune COM2 to a frequency */
+  async tuneCom2(frequencyMhz: string): Promise<void> {
+    if (this.com2 === frequencyMhz) return;
+    try {
+      await this.swiftCommand('ownaircraft', `.com2 ${frequencyMhz}`);
+      this.com2 = frequencyMhz;
+      this.emit('tuned', { com: 2, frequency: frequencyMhz });
+      console.log(`[Swift] COM2 → ${frequencyMhz} MHz`);
+    } catch (err) {
+      console.error(`[Swift] COM2 tune failed:`, (err as Error).message);
     }
-    this.emit('tuned', frequencyMhz);
-    console.log(`[Swift] Tuned COM1 to ${frequencyMhz} MHz`);
+  }
+
+  // --- Multi-user frequency management ---
+
+  /** A client requests to listen to a frequency */
+  requestFrequency(clientId: string, frequencyMhz: string): void {
+    if (!this.clientRequests.has(clientId)) {
+      this.clientRequests.set(clientId, new Set());
+    }
+    this.clientRequests.get(clientId)!.add(frequencyMhz);
+    this.rebalanceFrequencies();
+  }
+
+  /** A client no longer wants a frequency */
+  unrequestFrequency(clientId: string, frequencyMhz: string): void {
+    this.clientRequests.get(clientId)?.delete(frequencyMhz);
+    this.rebalanceFrequencies();
+  }
+
+  /** Remove all requests for a disconnected client */
+  removeClient(clientId: string): void {
+    this.clientRequests.delete(clientId);
+    this.rebalanceFrequencies();
+  }
+
+  /** Get frequency request counts sorted by popularity */
+  getFrequencyVotes(): Array<{ frequency: string; votes: number }> {
+    const counts = new Map<string, number>();
+    for (const freqs of this.clientRequests.values()) {
+      for (const f of freqs) {
+        counts.set(f, (counts.get(f) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .map(([frequency, votes]) => ({ frequency, votes }))
+      .sort((a, b) => b.votes - a.votes);
+  }
+
+  /** Auto-assign top 2 requested frequencies to COM1/COM2 */
+  private async rebalanceFrequencies(): Promise<void> {
+    const ranked = this.getFrequencyVotes();
+    const top1 = ranked[0]?.frequency ?? null;
+    const top2 = ranked[1]?.frequency ?? null;
+
+    if (top1 && top1 !== this.com1) await this.tuneCom1(top1);
+    if (top2 && top2 !== this.com2) await this.tuneCom2(top2);
+
+    this.emit('rebalanced', { com1: this.com1, com2: this.com2, votes: ranked });
+  }
+
+  // Legacy single-tune method (tunes COM1)
+  async tuneFrequency(frequencyMhz: string): Promise<void> {
+    await this.tuneCom1(frequencyMhz);
   }
 
   async untuneFrequency(frequencyMhz: string): Promise<void> {
-    this.tunedFrequencies = this.tunedFrequencies.filter((f) => f !== frequencyMhz);
+    if (this.com1 === frequencyMhz) this.com1 = null;
+    if (this.com2 === frequencyMhz) this.com2 = null;
     this.emit('untuned', frequencyMhz);
   }
 }
