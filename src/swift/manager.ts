@@ -1,13 +1,10 @@
-import { exec, execSync, ChildProcess, spawn } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { EventEmitter } from 'events';
 
-/**
- * Manages the swiftCore process and communicates via DBus.
- * swiftCore is the headless backend of the swift pilot client.
- * It connects to VATSIM as observer and handles AFV audio.
- */
+const SWIFT_DBUS = 'tcp:host=127.0.0.1,port=45000';
+const SWIFT_DEST = 'org.swift_project.swiftcore';
+
 export class SwiftManager extends EventEmitter {
-  private process: ChildProcess | null = null;
   private connected = false;
   private tunedFrequencies: string[] = [];
 
@@ -28,89 +25,57 @@ export class SwiftManager extends EventEmitter {
     return [...this.tunedFrequencies];
   }
 
-  /**
-   * Connect to VATSIM as observer via swiftCore DBus interface.
-   */
   async connect(cid: string, password: string): Promise<void> {
-    if (!this.isSwiftInstalled()) {
-      throw new Error('swiftCore not installed');
-    }
+    if (!this.isSwiftInstalled()) throw new Error('swiftCore not installed');
 
+    const callsign = `${cid}_OBS`;
     try {
-      // Use dbus-send to tell swiftCore to connect
-      // The DBus interface varies by swift version — these are the common paths
-      const callsign = `${cid}_OBS`;
-
-      // Set credentials via DBus
-      await this.dbusCall('org.swift_project.swiftcore',
-        '/swift/core', 'org.swift_project.swiftcore.context',
-        'setOwnAircraftCallsign', `string:"${callsign}"`);
-
-      // Connect as observer
-      await this.dbusCall('org.swift_project.swiftcore',
-        '/swift/core', 'org.swift_project.swiftcore.network',
-        'connectToNetwork', '');
-
+      await this.dbusCall('/network', 'org.swift_project.swiftcore.context.network',
+        'connectToNetwork', `string:"${callsign}" string:"${cid}" string:"${password}" int32:2`);
       this.connected = true;
       this.emit('connected');
       console.log(`[Swift] Connected as ${callsign}`);
     } catch (err) {
-      console.error('[Swift] Connection failed:', (err as Error).message);
+      console.error('[Swift] DBus connect failed:', (err as Error).message);
       throw err;
     }
   }
 
   async disconnect(): Promise<void> {
     try {
-      await this.dbusCall('org.swift_project.swiftcore',
-        '/swift/core', 'org.swift_project.swiftcore.network',
-        'disconnectFromNetwork', '');
+      await this.dbusCall('/network', 'org.swift_project.swiftcore.context.network', 'disconnectFromNetwork', '');
     } catch (_) {}
     this.connected = false;
     this.tunedFrequencies = [];
     this.emit('disconnected');
-    console.log('[Swift] Disconnected');
   }
 
-  /**
-   * Tune a COM frequency in swiftCore.
-   * swift uses COM1/COM2 radios — we tune COM1 for primary listening.
-   */
   async tuneFrequency(frequencyMhz: string): Promise<void> {
     const freqKhz = Math.round(parseFloat(frequencyMhz) * 1000);
-
     try {
-      // Set COM1 active frequency
-      await this.dbusCall('org.swift_project.swiftcore',
-        '/swift/core', 'org.swift_project.swiftcore.audio',
-        'setCom1ActiveFrequency', `int32:${freqKhz}`);
-
-      if (!this.tunedFrequencies.includes(frequencyMhz)) {
-        this.tunedFrequencies.push(frequencyMhz);
-      }
-      this.emit('tuned', frequencyMhz);
-      console.log(`[Swift] Tuned COM1 to ${frequencyMhz} MHz`);
+      await this.dbusCall('/audio', 'org.swift_project.swiftcore.context.audio',
+        'setComActiveFrequency', `int32:0 int32:${freqKhz}`);
     } catch (err) {
-      console.error(`[Swift] Failed to tune ${frequencyMhz}:`, (err as Error).message);
-      throw err;
+      console.error(`[Swift] Tune failed:`, (err as Error).message);
     }
+    if (!this.tunedFrequencies.includes(frequencyMhz)) {
+      this.tunedFrequencies.push(frequencyMhz);
+    }
+    this.emit('tuned', frequencyMhz);
+    console.log(`[Swift] Tuned ${frequencyMhz} MHz`);
   }
 
   async untuneFrequency(frequencyMhz: string): Promise<void> {
     this.tunedFrequencies = this.tunedFrequencies.filter((f) => f !== frequencyMhz);
     this.emit('untuned', frequencyMhz);
-    console.log(`[Swift] Untuned ${frequencyMhz} MHz`);
   }
 
-  private dbusCall(dest: string, path: string, iface: string, method: string, args: string): Promise<string> {
+  private dbusCall(path: string, iface: string, method: string, args: string): Promise<string> {
     return new Promise((resolve, reject) => {
-      const cmd = `dbus-send --session --dest=${dest} --type=method_call --print-reply ${path} ${iface}.${method} ${args}`.trim();
+      const cmd = `dbus-send --address=${SWIFT_DBUS} --type=method_call --print-reply --dest=${SWIFT_DEST} ${path} ${iface}.${method} ${args}`.trim();
       exec(cmd, { timeout: 5000 }, (err, stdout, stderr) => {
-        if (err) {
-          reject(new Error(`DBus call failed: ${stderr || err.message}`));
-        } else {
-          resolve(stdout);
-        }
+        if (err) reject(new Error(stderr || err.message));
+        else resolve(stdout);
       });
     });
   }

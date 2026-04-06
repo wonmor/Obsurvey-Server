@@ -1,45 +1,38 @@
 #!/bin/bash
 set -e
 
-echo "[entrypoint] Starting VATRadio Server with swift audio relay"
+echo "[entrypoint] VATRadio Server starting"
 
-# 1. Start DBus (required for swift IPC)
-mkdir -p /run/dbus
+export XDG_RUNTIME_DIR=/tmp/runtime-root
+mkdir -p /tmp/runtime-root /run/dbus
+
+# 1. DBus
 dbus-daemon --system --fork 2>/dev/null || true
-eval $(dbus-launch --sh-syntax)
+eval $(dbus-launch --sh-syntax 2>/dev/null) || true
 export DBUS_SESSION_BUS_ADDRESS
-echo "[entrypoint] DBus ready"
 
-# 2. Start virtual display (swift needs a display even headless)
-Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
+# 2. Xvfb
+Xvfb :99 -screen 0 1024x768x16 -ac -noreset &
 sleep 2
-echo "[entrypoint] Xvfb started on :99"
 
-# 3. Start PulseAudio with null sink for audio capture
-pulseaudio --start --system --disallow-exit --log-level=error 2>/dev/null \
-  || pulseaudio --start --exit-idle-time=-1 --log-level=error 2>/dev/null \
-  || true
+# 3. PulseAudio — MUST start before swift
+pulseaudio -D --exit-idle-time=-1 --log-level=error 2>/dev/null || true
 sleep 1
-
-# Create null sink and set as default
 pactl load-module module-null-sink sink_name=vatradio sink_properties=device.description=VATRadio 2>/dev/null || true
 pactl set-default-sink vatradio 2>/dev/null || true
-echo "[entrypoint] PulseAudio ready with vatradio sink"
+echo "[entrypoint] PulseAudio + vatradio sink ready"
 
-# 4. Start swiftCore if installed
+# 4. swiftCore
 if [ -x /opt/swift/bin/swiftcore ]; then
+    export LD_LIBRARY_PATH=/opt/swift/bin:${LD_LIBRARY_PATH:-}
     echo "[entrypoint] Starting swiftCore..."
-    # Set LD_LIBRARY_PATH so swift can find its bundled Qt libs
-    export LD_LIBRARY_PATH=/opt/swift/bin:${LD_LIBRARY_PATH}
-    /opt/swift/bin/swiftcore 2>&1 | sed 's/^/[swiftcore] /' &
-    SWIFT_PID=$!
+    /opt/swift/bin/swiftcore 2>&1 | sed 's/^/[swift] /' &
     sleep 5
-    echo "[entrypoint] swiftCore started (PID $SWIFT_PID)"
+    echo "[entrypoint] swiftCore running (DBus on tcp:127.0.0.1:45000)"
 else
-    echo "[entrypoint] WARNING: swiftCore not found at /opt/swift/bin/swiftcore"
-    echo "[entrypoint] Running in data-only mode (no audio)"
+    echo "[entrypoint] WARNING: swiftCore not found"
 fi
 
-# 5. Start Node.js server
-echo "[entrypoint] Starting Node.js server on port ${PORT:-3000}"
+# 5. Node.js
+echo "[entrypoint] Starting server on port ${PORT:-3000}"
 exec node /app/dist/index.js
