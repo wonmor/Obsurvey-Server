@@ -33,6 +33,21 @@ export function createApiRouter(swift: SwiftManager, audio: AudioCapture): Route
     });
   });
 
+  // Debug: send a swift dot-command
+  router.post('/debug/cmd', async (req: Request, res: Response) => {
+    const { context, command } = req.body;
+    if (!context || !command) {
+      res.status(400).json({ error: 'context and command required' });
+      return;
+    }
+    try {
+      const result = await swift.swiftCommand(String(context), String(command));
+      res.json({ ok: true, result });
+    } catch (err) {
+      res.json({ ok: false, error: (err as Error).message });
+    }
+  });
+
   // Proxy VATSIM data feed (public)
   router.get('/vatsim-data', async (_req: Request, res: Response) => {
     try {
