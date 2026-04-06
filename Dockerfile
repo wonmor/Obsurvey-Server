@@ -40,10 +40,11 @@ load-module module-always-sink" >> /etc/pulse/default.pa
 # Build Node.js server
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci
 COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npx tsc
+RUN npm prune --omit=dev
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
