@@ -14,7 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libqt5multimedia5-plugins \
     libgl1-mesa-glx libegl1-mesa libxkbcommon0 libxkbcommon-x11-0 \
     libasound2 libopus0 libglib2.0-0 \
-    libssl1.1 \
     curl wget ca-certificates gnupg \
     && mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
